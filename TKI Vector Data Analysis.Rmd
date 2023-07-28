@@ -1,0 +1,1362 @@
+---
+title: "TKI Vector Data"
+output: html_document
+date: "2023-06-07"
+---
+
+```{r setup, include=FALSE}
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r installing packages}
+#install packages and libraries
+
+# install.packages("tidyverse")
+# install.packages("devtools")
+# install.packages("lubridate")
+# install.packages("geodata")
+# install.packages("maptools")
+# install.packages("sf")
+# install.packages("terra")
+# install.packages("geosphere")
+# install.packages("raster")
+# install.packages("gam")
+# install.packages("metR")
+# install.packages("glmnet")
+# install.packages("maxnet")
+# install.packages("mgcv")
+# install.packages("gratia")
+
+library(tidyverse)
+library(malariaAtlas)
+library(lubridate) 
+library(geodata)
+library(maptools)
+library(sf)
+library(raster)
+library(terra)
+library(geosphere)
+library(gam)
+library(metR)
+library(glmnet)
+library(maxnet)
+library(mgcv)
+library(gratia)
+
+source("R/functions copy.R")
+
+sf_use_s2(FALSE)
+
+```
+
+
+```{r vector data filtering}
+#filtering for African continent and cutting out unnecessary variable columns
+vector <- read_csv('vector_extraction_data.csv')
+africa_subset <- vector %>%
+  filter(anopheline_region_id == "Africa")
+africa_subset <- subset(africa_subset, 
+                        select = c("sample_period_year_start","sample_period_year_end",
+                                   "collection_count","collection_method_name", 
+                                   "control_method_name",
+                                   "anopheline_species", "vector_site_coordinates_latitude", 
+                                   "vector_site_coordinates_longitude", "vector_site_full_name", 
+                                   "source_citation"))
+
+#count instances of unique sources (authors)
+# Count specific values
+source_counts <- vector %>%
+  count(source_citation, sort = TRUE)
+
+# View the value counts
+source_counts
+
+#count instances of unique sources, filtered for Africa
+# Count specific values
+source_counts_africa <- africa_subset %>%
+  count(source_citation, sort = TRUE)
+
+# View the value counts
+source_counts_africa
+
+# Calculate the number of unique instances
+unique_source_count <- vector %>%
+  summarize(unique_instances = n_distinct(source_citation))
+unique_source_count
+
+# View the unique count
+unique_source_count
+
+#filtering for larvae data
+larvae_subset <- africa_subset %>%
+  filter(collection_method_name == "larval collection")
+larvae_subset
+
+#filtering for adult mosq data
+adult_subset <- africa_subset %>%
+  filter(collection_method_name != "larval collection")
+adult_subset
+
+#filtering for presence-absence data
+presence_absence_subset <- africa_subset %>%
+  filter(collection_count >= 0)
+presence_absence_subset
+
+#filtering for presence-absence, presence vectors 
+pa_presence_subset <- presence_absence_subset %>%
+  filter(collection_count > 0)
+pa_presence_subset
+
+#filtering for presence-absence, absence vectors
+pa_absence_subset <- presence_absence_subset %>%
+  filter(collection_count == 0)
+pa_absence_subset
+
+#filtering for presence-only data
+presence_only_subset <- africa_subset %>%
+  filter(is.na(collection_count))
+presence_only_subset
+
+# filtering for sources where there are at least one 0 as a presence-absence sub-dataset
+source_0_pa_subset <- africa_subset %>%
+    filter(collection_count >= 0) %>%
+    count(source_citation, sort = TRUE)
+source_0_pa_subset
+
+# filtering for sources where there are at least one 0 as a presence-absence sub-dataset
+multiple_source_0_pa_subset <- source_0_pa_subset %>%
+    filter(n > 1)
+multiple_source_0_pa_subset
+
+#arranging by sample period
+sample_period_sort <- africa_subset %>%
+  arrange(sample_period_year_start) %>%
+  filter(!is.na(sample_period_year_start)) %>%
+  filter(sample_period_year_start > 0)
+
+```
+```{r read in affiliation data}
+
+#read in and count instances of unique sources 
+# (affiliated institutions) for the Lake Victoria region
+
+lake_region_affiliations <- read_csv("lake_region_source_counts.csv")
+
+#read in largest cities in Africa
+
+africa_largest_cities <- read_csv("africa_largest_cities.csv")
+```
+
+
+```{r creating objects}
+
+#using sf package to extract latitude and longitude from africa_subset
+
+africa_coords_obj <- st_as_sf(africa_subset, coords = c("vector_site_coordinates_longitude", "vector_site_coordinates_latitude"))
+print(africa_coords_obj)
+
+
+#converting to sf object
+
+print(africa_coords_obj)
+africa_coords_obj <- st_as_sf(africa_coords_obj, coords = c("geometry"), crs = st_crs(4326))
+print(africa_coords_obj)
+```
+
+
+```{r creating source location objects}
+#using sf package to extract latitude and longitude from lake_region_affiliations
+
+source_coords_obj <- st_as_sf(lake_region_affiliations, coords = c("longitude", "latitude"))
+print(source_coords_obj)
+
+#converting to sf object
+
+print(source_coords_obj)
+source_coords_obj <- st_as_sf(source_coords_obj, coords = c("geometry"))
+source_coords_obj <- st_set_crs(source_coords_obj, 4326)
+print(source_coords_obj)
+
+#using sf package to extract latitude and longitude from africa_largest_cities
+
+africa_largest_cities <- na.omit(africa_largest_cities)
+africa_cities_coords_obj <- st_as_sf(africa_largest_cities, 
+                                     coords = c("longitude", "latitude"))
+print(source_coords_obj)
+
+#converting to sf object
+
+print(africa_cities_coords_obj)
+africa_cities_coords_obj <- st_as_sf(africa_cities_coords_obj, coords = c("geometry"))
+africa_cities_coords_obj <- st_set_crs(africa_cities_coords_obj, 4326)
+print(africa_cities_coords_obj)
+  
+```
+
+
+```{r African continent map}
+
+#map of all mainland African countries and Madagascar
+
+africa_all_countries <- list("SDN", "MAR", "DZA", "NGA", "ZAF", "TUN", "ETH", "KEN", "UGA", "COD", "GHA", "TZA", "MLI", "SEN", "LBY", "SOM", "RWA", "NER", "CIV", "AGO", "ZWE", "MRT", "BFA", "CMR", "TCD", "ERI", "MOZ", "NAM", "MWI", "SLE", "SSD", "ZMB", "BDI", "DJI", "GIN", "BEN", "LBR", "GMB", "SWZ", "GAB", "BWA", "TGO", "LSO", "CAF", "ESH", "COG", "EGY", "GNB",    "MDG")
+
+africa_all_vector <- gadm(
+  country = africa_all_countries,
+  level = 0,
+  path = "data/downloads"
+)
+
+africa_all_vector
+plot(africa_all_vector)
+
+#turning africa_all_vector into an sf object
+
+africa_all_object <- st_as_sf(africa_all_vector)
+africa_all_object
+print(africa_all_object)
+
+#create raster of African continent
+
+africa_all <- rast(x=africa_all_object)
+plot(africa_all)
+africa_all_vector
+
+africa_all_raster = rasterize(africa_all_object, africa_all, field="COUNTRY")
+plot(africa_all_raster)
+
+terra::writeRaster(
+x = africa_all_raster,
+filename = "data/grids/africa_all_raster.tif",
+overwrite=TRUE
+)
+
+africa_near_lake_list <- list("KEN", "TZA", "UGA")
+
+africa_near_lake_vector <- gadm(
+  country = africa_near_lake_list,
+  level = 0,
+  path = "data/downloads"
+)
+africa_near_lake_object <- st_as_sf(africa_near_lake_vector)
+
+plot(africa_near_lake_object)
+
+#cutting out vector points that do not fit within map bounds
+
+africa_points_within_bounds <- st_set_crs(africa_coords_obj, 4326)
+africa_points_within_bounds
+
+africa_all_object
+africa_points_within_bounds <- st_intersection(africa_points_within_bounds, africa_all_object)
+africa_points_within_bounds
+
+
+africa_plot_points <- africa_points_within_bounds %>%
+  st_as_sf %>%
+  mutate(
+    x = st_coordinates(.)[,1],
+    y = st_coordinates(.)[,2],
+  )
+
+#plotting map
+
+africa_all_plot <- ggplot() + 
+  geom_sf(data = africa_all_object, fill="light grey", 
+          color = "#4F4F4F", alpha = 0.7, size=0.2) + 
+  geom_sf(data = africa_near_lake_object, fill="#d6b304", alpha = 0.6)
+
+#points within bounds
+
+africa_all_plot <- africa_all_plot + 
+  labs(title= "Recorded Vectors Across Africa", element_text(hjust = 0.5)) + 
+  geom_sf(data = africa_points_within_bounds, size=0.2, 
+          color = "#333444", fill = "#333444", alpha = 0.5)
+
+africa_all_plot <- africa_all_plot +
+  geom_sf(data = africa_cities_coords_obj,
+          size = 2.25, pch = 24, fill="white",
+          color="black", alpha = .85)
+    # + geom_sf_text(data = africa_cities_coords_obj, 
+                 # aes(label = city), size = 2, nudge_y = -0.1) 
+
+#changing background to white 
+
+africa_all_plot <- africa_all_plot + theme_bw() 
+
+plot(africa_all_plot)
+
+```
+
+```{r region around Lake Vic}
+#map of the African countries sharing Lake Victoria
+africa_near_lake_list <- list("KEN", "TZA", "UGA")
+
+#creating vectors for individual countries, for stats purposes
+
+ken_vector <- gadm(
+  country = "KEN",
+  level = 0,
+  path = "data/downloads"
+)
+
+ken_object <- st_as_sf(ken_vector)
+
+tza_vector <- gadm(
+  country = "TZA",
+  level = 0,
+  path = "data/downloads"
+)
+
+tza_object <- st_as_sf(tza_vector)
+
+uga_vector <- gadm(
+  country = "UGA",
+  level = 0,
+  path = "data/downloads"
+)
+
+uga_object <- st_as_sf(uga_vector)
+
+africa_near_lake_vector <- gadm(
+  country = africa_near_lake_list,
+  level = 0,
+  path = "data/downloads"
+)
+
+#turning lake vector into an object
+
+africa_near_lake_vector
+
+plot(africa_near_lake_vector)
+
+africa_near_lake_object <- st_as_sf(africa_near_lake_vector, crs = st_crs(4326))
+africa_near_lake_object
+
+plot(africa_near_lake_object)
+
+# Read the GLWD dataset as an sf object
+
+glwd_object <- st_read("8ark3lcpfw_GLWD_level1/glwd_1.shp")
+
+lake_victoria <- glwd_object[glwd_object$LAKE_NAME == "Lake Victoria", ]
+lake_victoria <- lake_victoria$geometry[1]
+print(lake_victoria)
+lake_victoria_object <- st_as_sf(lake_victoria, crs = st_crs(4326))
+print(lake_victoria_object)
+
+#cutting out vector points and largest cities 
+# that do not fit within map bounds
+
+africa_near_lake_object <- st_set_crs(africa_near_lake_object, 4326)
+lake_points_within_bounds <- st_intersection(africa_points_within_bounds, africa_near_lake_object)
+africa_cities_within_lake_bounds <- st_intersection(africa_cities_coords_obj, africa_near_lake_object)
+
+lake_points_within_bounds <- st_as_sf(lake_points_within_bounds, coords = c("geometry"), crs = st_crs(4326))
+lake_plot_points <- lake_points_within_bounds %>%
+  st_as_sf %>%
+  mutate(
+    x = st_coordinates(.)[,1],
+    y = st_coordinates(.)[,2],
+  )
+
+#plotting map
+
+africa_near_lake_plot <- ggplot() + 
+  geom_sf(data = africa_near_lake_object, 
+          color = "#4F4F4F", fill="light grey", 
+          alpha = 0.7, size=0.2) +
+  geom_sf(data = lake_victoria_object, fill="#316294",
+          color="#316294") 
+
+africa_near_lake_plot <- africa_near_lake_plot + 
+  geom_sf(data = source_coords_obj,  
+          aes(size = n), color="#d90404", alpha = 0.5) 
+
+africa_near_lake_plot <- africa_near_lake_plot + 
+  #labs(title= "Vectors Across Lake Victoria Region", element_text(hjust = 0.5)) + 
+  geom_sf(data = lake_points_within_bounds, size=0.2, 
+          color = "#333444", fill = "#333444", alpha = 0.5) 
+
+africa_near_lake_plot <- africa_near_lake_plot +
+  geom_sf(data = africa_cities_within_lake_bounds,
+          size = 2.25, pch = 24, fill="transparent",
+          color="black", alpha = .85)
+    # + geom_sf_text(data = africa_cities_within_lake_bounds, 
+                 # aes(label = city), size = 2, nudge_y = -0.1) 
+
+africa_near_lake_plot <- africa_near_lake_plot + 
+  guides(size = guide_legend(title = "Source Affiliations by Count")) +
+  theme_bw()
+africa_near_lake_plot
+
+```
+
+
+```{r create csv files for affiliation indexing}
+
+# create subset of unique citations for affiliation indexing 
+# ordered from most cited to least cited
+# whole African continent (within continental map bounds)
+
+# africa_citations_count <- tibble(africa_points_within_bounds) %>%
+#    count(source_citation, sort = TRUE)
+# africa_citations_count
+# write_csv(africa_citations_count, file = "africa_citations_count.csv")
+
+# create subset of unique citations for affiliation indexing 
+# ordered from most cited to least cited
+# Lake Victoria region ONLY (within 3 country map bounds)
+
+# lake_region_citations_count <- tibble(lake_points_within_bounds) %>%
+#    count(source_citation, sort = TRUE)
+# lake_region_citations_count
+# write_csv(africa_citations_count, file = "lake_region_citations_count.csv")
+
+
+#write csv for the affiliations in Africa not in Lake Vic region
+
+# africa_citations_no_lake <- tibble(africa_points_within_bounds) %>%
+#   count(source_citation, sort = TRUE) %>% 
+#   anti_join(lake_points_within_bounds, africa_points_within_bounds, 
+#    by = c("source_citation" =  "source_citation"))
+# africa_citations_no_lake <- subset(africa_all_within_bounds_subset,
+#                                           select = c("source_citation", "n"))
+# africa_citations_no_lake
+#write_csv(africa_citations_no_lake, file="africa_citations_no_lake.csv")
+```
+
+
+```{r source institutions barplot}
+
+barplot_data <- lake_region_affiliations %>%
+  mutate(
+    plot = ifelse(n >= 15, TRUE, FALSE),
+    affiliation_simple = ifelse(plot, affiliation_simple, "other")
+  ) %>%
+  group_by(affiliation_simple) %>%
+  summarise(
+    n = sum(n)
+  )
+
+ggplot(barplot_data) +
+  geom_bar( aes( x = n, y = reorder(affiliation_simple, n) ),
+    stat = "identity", 
+    fill = "darkblue"
+  ) +
+  #ggtitle("Vector Point Affiliations By Count") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  xlab("Count") +
+  ylab("Source affiliations")
+
+```
+
+
+
+```{r accessibility map tifs}
+#read in tanzania source locations accessibility
+#bias map geoTIFF file as terra::rast()
+
+tza_source_acc <- rast("tanzania_source_points.tif")
+tza_source_acc
+tza_2_source_acc <- rast("tza_2_source_points.tif")
+tza_2_source_acc
+
+plot(tza_source_acc)
+plot(tza_2_source_acc)
+
+#read in uganda & kenya source locations accessibility 
+#bias map geoTIFF file  as terra::rast()
+
+uga_ken_source_acc <- rast("uga_ken_source_points.tif")
+uga_ken_source_acc
+ken_2_source_acc <- rast("ken_2_source_points.tif")
+ken_2_source_acc
+
+plot(uga_ken_source_acc)
+plot(uga_ken_source_acc)
+plot(ken_2_source_acc)
+```
+
+```{r prepare rasters to simulate data}
+# simulate some data emulating the real data in the lake Victoria map above
+
+africa_near_lake_object
+plot(africa_near_lake_object)
+
+# bioclim data for Ken, Tza, Uga
+
+bioclim_ken <- worldclim_country(
+ country = "KEN",
+ var = "bio",
+ res = 0.5,
+ path = "data/downloads"
+)
+
+bioclim_tza <- worldclim_country(
+  country = list("TZA"),
+  var = "bio",
+  res = 0.5,
+  path = "data/downloads"
+)
+
+bioclim_uga <- worldclim_country(
+  country = list("UGA"),
+  var = "bio",
+  res = 0.5,
+  path = "data/downloads"
+)
+
+lake_region_bioclim_list <- list(bioclim_ken, bioclim_tza, bioclim_uga)
+
+lake_region_bioclim <- do.call(merge, lake_region_bioclim_list)
+plot(lake_region_bioclim)
+
+plot(bioclim_ken)
+
+summary(africa_near_lake_vector)
+
+lake_region_mask <- lake_region_bioclim[[1]] %>%
+  mask(africa_near_lake_vector) * 0 + 1
+
+plot(lake_region_mask)
+
+
+# process bioclim into shape
+
+bc_lake_region <- mask(
+  x = lake_region_bioclim,
+  mask = lake_region_mask
+) 
+
+plot(bc_lake_region)
+
+# merging and masking global accessibility mapping GeoTIFF rasters 
+# source locations in the Lake Vic region
+# as a travel time estimate
+
+source_acc_list <- list(tza_source_acc, tza_2_source_acc, uga_ken_source_acc, ken_2_source_acc)
+
+source_acc <- do.call(merge, source_acc_list)
+
+plot(tza_source_acc)
+plot(uga_ken_source_acc)
+plot(source_acc)
+
+
+# process accessibility bias data into shape
+
+lake_region_source_acc <- crop(
+  x = source_acc,
+  y = lake_region_mask
+) %>%
+  mask(
+    mask = lake_region_mask
+  )
+
+lake_region_source_acc
+lake_region_mask
+
+plot(lake_region_source_acc)
+plot(lake_region_mask)
+
+lake_region_source_rescale_acc <- lake_region_source_acc
+
+lake_region_source_rescale_acc[] <- lake_region_source_rescale_acc[]/ max(lake_region_source_rescale_acc[], na.rm = TRUE)
+
+lake_region_source_rescale_acc[] <- 1 - lake_region_source_rescale_acc[]
+
+plot(lake_region_source_rescale_acc)
+
+terra::writeRaster(
+  x = lake_region_mask,
+  filename = "data/grids/lake_region_mask.tif",
+  overwrite=TRUE
+)
+
+terra::writeRaster(
+  x = bc_lake_region,
+  filename = "data/grids/bc_lake_region.tif",
+  overwrite=TRUE
+)
+
+terra::writeRaster(
+  x = lake_region_source_rescale_acc,
+  filename = "data/grids/lake_region_source_rescale_acc.tif",
+  overwrite=TRUE
+)
+
+```
+
+```{r simulating bias & relative abundance}
+
+#redoing these for the lake vic region 
+
+#specify covariates
+# BIO4 = Temperature Seasonality (standard deviation ×100)
+lake_region_tseas <- bc_lake_region[[4]] 
+# BIO5 = Max Temperature of Warmest Month
+lake_region_tmax   <- bc_lake_region[[5]]
+# BIO7 = Temperature Annual Range (BIO5-BIO6)
+lake_region_trange <- bc_lake_region[[7]]
+
+lake_region_covs <- c(lake_region_tseas, lake_region_tmax, lake_region_trange)
+names(lake_region_covs) <- c("lake_region_tseas", "lake_region_tmax", "lake_region_trange")
+
+plot(lake_region_source_rescale_acc)
+
+# bias layer
+lake_region_bias <- lake_region_source_rescale_acc ^ 2
+names(lake_region_bias) <- "lake_region_bias"
+
+plot(lake_region_bias)
+ 
+# terra::writeRaster(
+# x = lake_region_bias,
+# filename = "data/grids/lake_region_bias.tif", 
+# overwrite=TRUE
+# )
+
+# generate the fake 'true' relative abundance raster
+
+# generate an unscaled relative abundance
+lake_region_rel_abund_unscaled <- exp(-1 + lake_region_covs$lake_region_tmax * 0.1)
+plot(lake_region_rel_abund_unscaled)
+
+# create your own here:
+
+lake_region_rel_abund_unscaled <- exp(1 +
+                                lake_region_covs$lake_region_tseas * -0.01 +
+                                lake_region_covs$lake_region_tmax * -0.03 +
+                                lake_region_covs$lake_region_trange * -0.01 + 
+                                lake_region_covs$lake_region_trange ^ 2 * 0.02)
+
+
+# rescale the relative abundance, from 0 to 1
+
+lake_region_rel_abund <- rescale_abundance(lake_region_rel_abund_unscaled)
+
+names(lake_region_rel_abund) <- "lake_region_relative_abundance"
+
+plot(lake_region_rel_abund)
+
+# terra::writeRaster(
+#   x = lake_region_rel_abund,
+#   filename = "data/grids/lake_region_rel_abund.tif", 
+#   overwrite=TRUE
+# )
+
+# sample abundance data at a random set of locations
+n_samples <- 100
+
+# random locations all over the country - unweighted sampling
+lake_region_sample_locations_random <- random_locations(lake_region_mask,
+                                                n_samples,
+                                                weighted = FALSE)
+
+plot(lake_region_rel_abund)
+points(lake_region_sample_locations_random)
+
+lake_region_catches_random <- sim_catches(sample_locations = lake_region_sample_locations_random,
+                                  relative_abundance = lake_region_rel_abund,
+                                  max_average_catch_size = 100)
+
+
+#plotting distribution with bg = truth
+plot(lake_region_rel_abund)
+points(lake_region_catches_random, pch = 16, bg = lake_region_catches_random$presence) 
+
+# random locations, biased as per the bias layer - e.g. convenience samples
+lake_region_sample_locations_bias_weighted <- random_locations(lake_region_bias,
+                                                        n_samples)
+
+plot(lake_region_bias)
+points(lake_region_sample_locations_bias_weighted, pch = 16)
+lake_region_catches_bias_weighted <- sim_catches(sample_locations = lake_region_sample_locations_bias_weighted,
+                                         relative_abundance = lake_region_rel_abund,
+                                         max_average_catch_size = 100)
+
+plot(lake_region_rel_abund)
+points(lake_region_catches_bias_weighted, pch = 21, bg = lake_region_catches_bias_weighted$presence)
+
+
+# random locations, biased as per the relative abundance layer - e.g. targeted
+# to areas of high abundance (where malaria interventions happen?)
+lake_region_sample_locations_abundance_weighted <- random_locations(lake_region_rel_abund ^ (1/3),
+                                                            n_samples)
+
+lake_region_catches_abundance_weighted <- sim_catches(sample_locations = lake_region_sample_locations_abundance_weighted,
+                                              relative_abundance = lake_region_rel_abund,
+                                              max_average_catch_size = 100)
+
+plot(lake_region_rel_abund, main = "Random Points Targeted to High Abundance Areas", xlab = "latitude", ylab = "longitude")
+points(lake_region_catches_abundance_weighted,
+       pch = 21,
+       bg = lake_region_catches_abundance_weighted$presence)
+
+```
+
+```{r gam regression function}
+# rasterizing
+
+agg_factor <- 4
+# aggregate the travel time, and then extract numbers of points in each cell
+travel_time_agg <- aggregate(lake_region_source_acc, agg_factor, fun = "mean")
+point_count_raster <- rasterize(x = africa_coords_obj, y = travel_time_agg, fun = length, field = "collection_count")
+
+# modelling density of occurrence points as a function 
+# of accessibility travel time using gam
+
+counts <- as.vector(point_count_raster)
+length(counts)
+
+lake_vict_travel_time <- as.vector(travel_time_agg)
+
+point_gam_data <- tibble(count = counts, time = lake_vict_travel_time)
+point_gam_data <- point_gam_data %>% 
+  filter(!is.na(time)) %>% 
+  mutate(count=if_else(is.na(count), 0, count))
+
+
+table(point_gam_data$count, useNA ="always")
+plot(count ~ time, data = point_gam_data)
+
+# plotting point_gam regression
+
+# point_gam <- mgcv::gam(count ~ s(time), data = point_gam_data, family = "poisson")
+point_gam <- mgcv::gam(count ~ s(time), data = point_gam_data, family = nb)
+
+summary(point_gam)
+point_gam
+plot(point_gam)
+rug(point_gam_data$time)
+
+
+#gam prediction confidence interval
+time_predict <- seq(0, 240, length.out = 1000)
+pred_data <- data.frame(time = time_predict)
+
+my_const <- coef(point_gam)[1]
+
+estimates <- smooth_estimates(point_gam, data = pred_data) |>
+  add_confint() |>
+  mutate(
+    across(tidyselect::all_of(c("est", "lower_ci", "upper_ci")),
+                .fns = \(x) x + my_const)) |>
+  transform_fun(fun = \(x) exp(x))
+
+ggplot(estimates, aes(x = time)) +
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.3) +
+  geom_line(aes(y = est)) +
+  xlim(c(0, 240)) +
+  ylim(c(0, 6)) +
+  ylab("number of occurrence locations per cell") +
+  xlab("travel time from a source location (minutes)") + 
+  theme_bw()
+
+```
+
+```{r hexbin map of Lake Vic region}
+
+plot(africa_near_lake_object)
+lake_area_of_interest <- st_union(africa_near_lake_object)
+plot(lake_area_of_interest)
+
+lake_zeros_for_hex_map <- lake_area_of_interest %>%
+  st_make_grid(what = "centers", n = 120) %>%
+  st_intersection(lake_area_of_interest)
+plot(lake_zeros_for_hex_map)
+
+# simulating 0s for points of no data
+# as pseudo-absences
+
+lake_plot_points_zeros <- lake_zeros_for_hex_map %>%
+  st_as_sf %>%
+  mutate(
+    x = st_coordinates(.)[,1],
+    y = st_coordinates(.)[,2],
+  )
+
+
+# plotting hexogonal bin map for African continent
+
+ggplot(data = lake_plot_points, aes(x=x, y=y) ) +
+  geom_hex() +
+  theme_bw()
+
+lake_region_hex_plot <- ggplot() +
+  coord_fixed() +
+  geom_hex(data = lake_plot_points_zeros, aes(x=x, y=y), fill="lightgrey", color = "lightgrey") +
+  geom_hex(data = lake_plot_points, aes(x=x, y=y), binwidth = c(0.485, 0.485)) +
+  scale_fill_continuous(type = "viridis", trans = "log10") +
+  theme_bw() +
+  scale_x_continuous() +
+  scale_y_continuous() +
+  #ggtitle("Vector Points in Lake Victoria Region By Concentration") +
+  xlab("latitude") +
+  coord_equal(ratio = 1) +
+  ylab("longitude") + theme(plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1)
+
+lake_region_hex_plot
+
+```
+
+
+```{r hexbin map of African continent}
+
+# plot(africa_all_object)
+# africa_area_of_interest <- st_union(africa_all_object)
+# plot(africa_area_of_interest)
+# 
+# # simulating 0s for points of no data 
+# # as pseudo-absences
+#
+# africa_zeros_for_hex_map <- africa_area_of_interest %>%
+#   st_make_grid(what = "centers", n = 70) %>%
+#   st_intersection(africa_area_of_interest) 
+# #plot(africa_zeros_for_hex_map)
+# 
+# africa_plot_points_zeros <- africa_zeros_for_hex_map %>%
+#   st_as_sf %>%
+#   mutate(
+#     x = st_coordinates(.)[,1],
+#     y = st_coordinates(.)[,2],
+#   )
+# 
+#
+# # plotting hexogonal bin map for African continent
+#
+# ggplot() +
+#   geom_hex(data = africa_plot_points_zeros, aes(x=x, y=y), fill="light grey", 
+#            color = "light grey") +
+#   geom_hex(data = africa_plot_points, aes(x=x, y=y)) +
+#   scale_fill_continuous(type = "viridis", trans = "log10") +
+#   theme_bw() + coord_fixed() +
+#   scale_x_continuous() +
+#   scale_y_continuous() +
+#   #ggtitle("Vector Points in Africa By Concentration") +
+#   xlab("latitude") +
+#   ylab("longitude") + theme(plot.title = element_text(hjust = 0.5)) 
+# 
+# #+ geom_sf(data = africa_all_object, fill="transparent")
+ 
+```
+
+
+``` {r simulating biased occurrence data}
+
+# simulating biased occurrence data - there are two ways:
+
+# 1. simulate biased sampling locations, and then sample the presence at those
+# locations, and only keep the ones in which they are present
+
+# filter out biased ones to only the 1s, and store as coordinates of occurrence records
+lake_region_sample_locations_bias_weighted <- random_locations(lake_region_bias,
+                                                       n_samples)
+lake_region_catches_bias_weighted <- sim_catches(sample_locations = lake_region_sample_locations_bias_weighted,
+                                         relative_abundance = lake_region_rel_abund,
+                                         max_average_catch_size = 100)
+lake_region_occurrence_coords <- crds(lake_region_catches_bias_weighted[lake_region_catches_bias_weighted$presence == 1])
+
+plot(lake_region_mask)
+points(lake_region_occurrence_coords, pch = 16)
+
+# this is great, but when simulating, it's difficult to get a realistic number
+# of occurrence records for model fitting! You can try changing the number of
+# sampling locations (n_samples in the code above) until it looks good:
+
+lake_region_sample_locations_bias_weighted <- random_locations(lake_region_bias,
+                                                       2000)  # <- change this number
+lake_region_catches_bias_weighted <- sim_catches(sample_locations = lake_region_sample_locations_bias_weighted,
+                                         relative_abundance = lake_region_rel_abund,
+                                         max_average_catch_size = 100)
+lake_region_occurrence_coords <- crds(lake_region_catches_bias_weighted[lake_region_catches_bias_weighted$presence == 1])
+
+# number of records
+nrow(lake_region_occurrence_coords)
+plot(lake_region_mask)
+points(lake_region_occurrence_coords, pch = 16)
+
+
+# 2. alternatively, you can simulate the distribution of occurrence points by
+# simulating locations, biased by the *product* of the bias and probability of
+# detection in each cell. The probability of detection is calculated using a
+# formula that assumes the occurrence comes from a catch (like the simulations
+# above), and that the number of mosquitoes caught is a Poisson sample, given
+# the average number. It is the probability of observing one *or more*
+# mosquitoes in the catch. 
+
+lake_region_prob_present <- probability_of_presence(lake_region_rel_abund, max_average_catch_size = 100)
+names(lake_region_prob_present) <- "lake_region_prob_present"
+plot(lake_region_prob_present)
+
+lake_region_reported_occurrence_rate <- lake_region_bias * lake_region_prob_present
+names(lake_region_reported_occurrence_rate) <- "lake_region_rep_occ_rate"
+
+plot(lake_region_reported_occurrence_rate)
+n_occurrences <- 100
+lake_region_ample_locations_bias_weighted <- random_locations(lake_region_reported_occurrence_rate,
+                                                       n_occurrences)
+
+# plot the reported occurrence rates
+plot(lake_region_reported_occurrence_rate)
+points(lake_region_sample_locations_bias_weighted, pch = 16)
+
+# plot the four-panel plot of scaled relative 
+# abundance (A), probability of detection (B), 
+# bias layer (C), and apparent occurrence rate (D)
+
+par(mfrow = c(2, 2), mai = c(0.5, 0.5, 0.5, 0.5))
+
+plot(lake_region_rel_abund, main = "A")
+plot(lake_region_prob_present, main = "B")
+plot(lake_region_bias, main = "C")
+plot(lake_region_reported_occurrence_rate, main = "D")
+
+
+terra::writeRaster(
+  x = lake_region_prob_present,
+  filename = "data/grids/lake_region_prob_present1.tif", 
+  overwrite=TRUE
+)
+
+terra::writeRaster(
+  x = lake_region_reported_occurrence_rate,
+  filename = "data/grids/lake_region_reported_occurrence_rate1.tif", 
+  overwrite=TRUE
+)
+
+dir.create("data/lake_region_tabular")
+# save occurrence data
+
+# presence_only
+write.csv(
+  x = lake_region_occurrence_coords,
+  file = "data/tabular/lake_region_presence_only_data.csv",
+  row.names = FALSE
+)
+
+# format presence absence data
+
+# presence-absence data with sampling locations randomly selected
+lake_region_pa_random_data <- as_tibble(lake_region_catches_random) %>%
+  dplyr::select(count, presence) %>%
+  bind_cols(as_tibble(crds(lake_region_catches_random)))
+
+
+write.csv(
+  x = lake_region_pa_random_data,
+  file = "data/tabular/lake_region_presence_absence_random_sampling.csv",
+  row.names = FALSE
+)
+
+# presence-absence data with sampling locations biased towards areas closer to
+# major cities
+lake_region_pa_bias_data <- as_tibble(lake_region_catches_bias_weighted) %>%
+  dplyr::select(count, presence) %>%
+  bind_cols(as_tibble(crds(lake_region_catches_bias_weighted)))
+
+write.csv(
+  x = lake_region_pa_bias_data,
+  file = "data/tabular/lake_region_presence_absence_bias_sampling.csv",
+  row.names = FALSE
+)
+
+# presence-absence data with sampling locations biased towards areas with higher
+# abundance
+lake_region_pa_bias_abund_data <- as_tibble(lake_region_catches_abundance_weighted) %>%
+  dplyr::select(count, presence) %>%
+  bind_cols(as_tibble(crds(lake_region_catches_abundance_weighted)))
+
+plot(lake_region_pa_bias_abund_data)
+
+write.csv(
+  x = lake_region_pa_bias_abund_data,
+  file = "data/tabular/lake_region_presence_absence_bias_abund_sampling.csv",
+  row.names = FALSE
+)
+
+```
+
+
+```{r SDMs}
+
+#fit models
+
+# read in our data!
+
+# rasters
+rel_abund <- terra::rast("data/grids/lake_region_rel_abund.tif")
+prob_present <- terra::rast("data/grids/lake_region_prob_present.tif")
+bias <- terra::rast("data/grids/lake_region_bias.tif")
+reported_occurrence_rate <- terra::rast("data/grids/lake_region_reported_occurrence_rate.tif")
+
+lake_region_mask <- terra::rast("data/grids/lake_region_mask.tif")
+bc_lake_region <- terra::rast("data/grids/bc_lake_region.tif")
+lake_region_rescale_travel <- terra::rast("data/grids/lake_region_merged_rescale_travel.tif")
+
+# points 
+occurrence_coords <- read_csv("data/tabular/lake_region_presence_only_data.csv")
+pa_random_data <- read_csv("data/tabular/lake_region_presence_absence_random_sampling.csv")
+pa_bias_data <- read_csv("data/tabular/lake_region_presence_absence_bias_sampling.csv")
+pa_bias_abund_data  <- read_csv("data/tabular/lake_region_presence_absence_bias_abund_sampling.csv")
+
+#species_df <- read_csv("data/tabular/species_df.csv")
+
+### Model: logistic regression of random presence-absence data
+
+pa_random_data
+
+data_pa_random <- model_data_presence_absence(
+  pa_data = pa_random_data,
+  covariates = lake_region_covs
+)
+
+data_pa_random
+
+# fit a simple model!
+model_pa_random_logistic <- glm(
+  presence ~ lake_region_tseas + lake_region_tmax + lake_region_trange,
+  data = data_pa_random,
+  family = binomial()
+)
+summary(model_pa_random_logistic)
+
+
+# plot the partial responses for each
+# predictor variable (covariate)
+partial_response_plot(
+  model = model_pa_random_logistic,
+  data = data_pa_random,
+  var = "lake_region_tmax"
+)
+
+# now do
+# tseas
+# trange
+partial_response_plot(
+  model = model_pa_random_logistic,
+  data = data_pa_random,
+  var = "lake_region_tseas"
+)
+
+partial_response_plot(
+  model = model_pa_random_logistic,
+  data = data_pa_random,
+  var = "lake_region_trange"
+)
+
+# predict our distribution based on our model
+# and covariates
+pred_pa_random_logistic <- sdm_predict(
+  model = model_pa_random_logistic,
+  covariates = lake_region_covs
+)
+
+# plot it
+plot(pred_pa_random_logistic)
+
+#compare it with the truth
+plot(c(rel_abund, prob_present, pred_pa_random_logistic))
+plot(c(prob_present, pred_pa_random_logistic))
+### Model: logistic regression of presence-only data
+# with random background 
+
+# sample random background points
+n_background_points <- 10000
+
+random_bg <- terra::spatSample(
+  x = lake_region_mask,
+  size = n_background_points,
+  na.rm = TRUE,
+  as.points = TRUE
+)
+
+rastpointplot(lake_region_mask, random_bg)
+
+# put presence and background data together
+# with covariates
+
+data_po_random_bg <- model_data_presence_only(
+  presences = occurrence_coords,
+  absences = random_bg,
+  covariates = lake_region_covs
+)
+
+# fit a simple model!
+model_po_random_bg_logistic <- glm(
+  presence ~ lake_region_tseas + lake_region_tmax + lake_region_trange,
+  data = data_po_random_bg,
+  family = binomial()
+)
+summary(model_po_random_bg_logistic)
+
+# partial response of each variable
+partial_response_plot(
+  model = model_po_random_bg_logistic,
+  data = data_po_random_bg,
+  var = "lake_region_tmax"
+)
+# do others!
+partial_response_plot(
+  model = model_po_random_bg_logistic,
+  data = data_po_random_bg,
+  var = "lake_region_tseas"
+)
+
+partial_response_plot(
+  model = model_po_random_bg_logistic,
+  data = data_po_random_bg,
+  var = "lake_region_trange"
+)
+# predict our distribution based on our model and covariates
+pred_po_random_bg_logistic <- sdm_predict(
+  model = model_po_random_bg_logistic,
+  covariates = lake_region_covs
+)
+
+# plot it
+plot(pred_po_random_bg_logistic)
+
+plot(c(pred_pa_random_logistic, pred_po_random_bg_logistic))
+# now compare that prediction with the truth
+plot(c(prob_present, pred_pa_random_logistic, pred_po_random_bg_logistic, reported_occurrence_rate))
+
+
+### Model:presence-only with maxnet (R version of maxent)
+
+#use the presence only and random background again
+data_po_random_bg
+
+# model in maxnet
+model_po_random_bg_maxent <- maxnet(
+  p = data_po_random_bg$presence,
+  data = data_po_random_bg %>% dplyr::select(-presence),
+  f = maxnet.formula(
+    p = data_po_random_bg$presence,
+    data = data_po_random_bg %>% dplyr::select(-presence),
+    classes = "lqp"
+  ),
+  addsamplestobackground = FALSE # already created them
+)
+
+
+# partial response of each variable
+# different for maxnet than the glms
+plot(model_po_random_bg_maxent, "lake_region_tseas")
+
+plot(model_po_random_bg_maxent, "lake_region_tmax")
+
+plot(model_po_random_bg_maxent, "lake_region_trange")
+# do others!
+
+
+# predict our distribution based on our model and covariates
+pred_po_random_bg_maxent <- sdm_predict(
+  model = model_po_random_bg_maxent,
+  covariates = lake_region_covs
+)
+
+# plot it
+plot(pred_po_random_bg_maxent)
+
+plot(c(pred_po_random_bg_logistic, pred_po_random_bg_maxent))
+
+plot(c(prob_present, pred_pa_random_logistic,
+       pred_po_random_bg_logistic, pred_po_random_bg_maxent))
+
+plot(c(prob_present, pred_pa_random_logistic,
+       pred_po_random_bg_maxent, reported_occurrence_rate))
+
+
+
+
+### Model:presence-only with maxnet (R version of maxent)
+# with bias layer
+
+#use the presence only and random background again
+data_po_random_bg
+
+# extract bias values from presence and background locations
+names(bias) <- "bias"
+maxent_bias_df <-  model_data_presence_only(
+  presences = occurrence_coords,
+  absences = random_bg,
+  covariates = bias
+)
+
+
+# log them and create vector
+maxent_bias <- log(maxent_bias_df$bias)
+
+# model in maxnet
+
+model_po_random_bg_maxent_bias <- maxnet(
+  p = data_po_random_bg$presence,
+  data = data_po_random_bg %>% dplyr::select(-presence),
+  offset = maxent_bias %>% as.matrix(),
+  f = maxnet.formula(
+    p = data_po_random_bg$presence,
+    data = data_po_random_bg %>% dplyr::select(-presence),
+    classes = "lqp"
+  ),
+  addsamplestobackground = FALSE # becase we have included background
+)
+
+
+# partial response of each variable
+# different for maxnet than the glms
+plot(model_po_random_bg_maxent_bias, "lake_region_tseas")
+plot(model_po_random_bg_maxent_bias, "lake_region_tmax")
+plot(model_po_random_bg_maxent_bias, "lake_region_trange")
+# do others!
+
+
+# predict our distribution based on our model and covariates
+pred_po_random_bg_maxent_bias <- sdm_predict(
+  model = model_po_random_bg_maxent_bias,
+  covariates = lake_region_covs
+)
+
+
+# plot it
+
+plot(c(pred_po_random_bg_maxent, pred_po_random_bg_maxent_bias))
+
+plot(c(prob_present,
+  pred_po_random_bg_maxent,
+  pred_po_random_bg_maxent_bias,
+  reported_occurrence_rate))
+
+
+### Model: glm with target group-background
+
+# our data
+# presences
+occurrence_coords
+
+# this time we will use other species as "absences"
+# species_df
+# 
+# data_po_tgb_all <- model_data_presence_only(
+#   presences = occurrence_coords,
+#   absences = species_df %>%
+#     filter(type == "focal") %>%
+#     dplyr::select(x, y),
+#   covariates = lake_region_covs
+# )
+
+
+
+# 
+# # maxent with target group background (and not bias)
+# 
+# model_po_tbg_maxent <- maxnet(
+#   p = data_po_tgb_all$presence,
+#   data = data_po_tgb_all %>% dplyr::select(-presence),
+#   f = maxnet.formula(
+#     p = data_po_tgb_all$presence,
+#     data = data_po_tgb_all %>% dplyr::select(-presence),
+#     classes = "lqp"
+#   ),
+#   addsamplestobackground = FALSE # becase we have included background
+# )
+# summary(model_po_tbg_maxent)
+# 
+# # predict our distribution based on our model and covariates
+# pred_po_tgb_maxent <- sdm_predict(
+#   model = model_po_tbg_maxent,
+#   covariates = lake_region_covs
+# )
+# 
+# # plot it
+# plot(pred_po_tgb_maxent)
+
+# # now compare that prediction with the truth
+# plot(c(prob_present,
+#        pred_po_random_bg_maxent,
+#        pred_po_random_bg_maxent_bias,
+#        pred_po_tgb_maxent))
+
+
+
+### Model: correlated predictor variables
+
+lake_region_covs_correlated <- bc_lake_region[[c(1,5,12)]]
+names(lake_region_covs_correlated) <- c("lake_region_tmean", "lake_region_tmax", "lake_region_precip")
+plot(lake_region_covs_correlated)
+
+pa_random_data
+
+data_pa_random_correlated <- model_data_presence_absence(
+  pa_data = pa_random_data,
+  covariates = lake_region_covs_correlated
+)
+
+data_pa_random_correlated
+
+# fit a simple model!
+model_pa_random_correlated_logistic <- glm(
+  presence ~  lake_region_tmean + lake_region_tmax + lake_region_precip,
+  data = data_pa_random_correlated,
+  family = binomial()
+)
+summary(model_pa_random_correlated_logistic)
+
+
+# plot the partial responses for each
+# predictor variable (covariate)
+partial_response_plot(
+  model = model_pa_random_correlated_logistic,
+  data = data_pa_random_correlated,
+  var = "lake_region_tmax"
+)
+# now do
+# tseas
+# trange
+partial_response_plot(
+  model = model_pa_random_correlated_logistic,
+  data = data_pa_random_correlated,
+  var = "lake_region_tmean"
+)
+partial_response_plot(
+  model = model_pa_random_correlated_logistic,
+  data = data_pa_random_correlated,
+  var = "lake_region_precip"
+)
+
+# predict our distribution based on our model
+# and covariates
+pred_pa_random_correlated_logistic <- sdm_predict(
+  model = model_pa_random_correlated_logistic,
+  covariates = lake_region_covs_correlated
+)
+
+# plot it
+plot(pred_pa_random_correlated_logistic)
+
+
+plot(c(prob_present, pred_pa_random_correlated_logistic))
+
+
+# plot the four-panel plot of probability of detection (A), 
+# glm w/ presence-absences (B), Maxent w/ no correction (C),
+# and Maxent w/ bias correction (D)
+
+par(mfrow = c(2, 2), mai = c(0.5, 0.5, 0.5, 0.5))
+
+plot(lake_region_prob_present, main = "A")
+plot(pred_pa_random_logistic, main = "B") 
+plot(pred_po_random_bg_maxent, main = "C")
+plot(pred_po_random_bg_maxent_bias, main = "D")
+
+
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

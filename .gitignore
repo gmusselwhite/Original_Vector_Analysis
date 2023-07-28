@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+/data
+*.RData
+*.DS_Store
+*.html
+*.csv
+*.tif
+/8ark3lcpfw_GLWD_level1
